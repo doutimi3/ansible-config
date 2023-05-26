@@ -520,6 +520,43 @@ upstream backend {
       }
    }
 ```
+* Create another folder called "static-assignments".
+* Create a new file called nginx.yml inside the above folder and add the below lines of code:
+
+```YAML
+---
+- hosts: nginx
+  become: true
+  roles:
+     - nginxRole
+```
+
+* Add another file called "database.yml" inside the above folder with the below lines of code:
+```YAML
+---
+- hosts: db
+  roles:
+    - mysql
+```
+
+* Create a new folder called "playbooks", inside this folder, create a file called "site.yml" and add the below block of code
+
+```YAML
+---
+- hosts: db
+- name: database assignment
+  ansible.builtin.import_playbook: ../static-assignments/database.yml
+
+- hosts: nginx
+- name: nginx assignment
+  ansible.builtin.import_playbook: ../static-assignments/nginx.yml
+```
+
+
+
+Commit changes to the feature/pipeline-stages branch, confirm that this worked as expected on jenkins and create a pull request to merge it to main branch.
+
+
 
 
 
