@@ -148,6 +148,10 @@ pipeline {
 * Commit and push these changes to github.
 * To make your new branch show up in Jenkins, we need to tell Jenkins to scan the repository by clicking on the "Administration" button and the the "Scan Repository Now" icon.
 
+![](./img/scan_now.png)
+
+* Refresh the page and both branches will start building automatically. You can go into Blue Ocean and see both branches there too.
+* In Blue Ocean, you can now see how the Jenkinsfile has caused a new step in the pipeline launch build for the new branch.
 
 
 
