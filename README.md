@@ -422,7 +422,7 @@ pipeline {
 
       stage('Checkout SCM') {
          steps{
-            git branch: "${gitBranch}", url: 'https://github.com/doutimi3/ansible-config-mgt-3.git'
+            git branch: "${gitBranch}", url: 'https://github.com/doutimi3/ansible-config.git'
          }
        }
 
@@ -551,8 +551,6 @@ upstream backend {
 - name: nginx assignment
   ansible.builtin.import_playbook: ../static-assignments/nginx.yml
 ```
-
-
 
 Commit changes to the feature/pipeline-stages branch, confirm that this worked as expected on jenkins and create a pull request to merge it to main branch.
 

@@ -21,7 +21,7 @@ pipeline {
 
       stage('Checkout SCM') {
          steps{
-            git branch: "${gitBranch}", url: 'https://github.com/doutimi3/ansible-config-mgt-3.git'
+            git branch: "${gitBranch}", url: 'https://github.com/doutimi3/ansible-config.git'
          }
        }
 
