@@ -105,9 +105,6 @@ todo-server ansible_user=ec2-user
 
 [tooling]
 tooling-server ansible_user=ec2-user
-
-[db:vars]
-ansible_python_interpreter=/usr/bin/python
 ```
 
 __STEP 2: Setup Jenkins Configurations__
@@ -552,10 +549,118 @@ upstream backend {
   ansible.builtin.import_playbook: ../static-assignments/nginx.yml
 ```
 
-Commit changes to the feature/pipeline-stages branch, confirm that this worked as expected on jenkins and create a pull request to merge it to main branch.
+* Commit changes to the feature/pipeline-stages branch, confirm that this worked as expected on jenkins and create a pull request to merge it to main branch.
+
+* On the Jenkins UI, navigate to "Dashboard>ansible-config" and click on "Scan repository Now". This will scan the repo to include the recent changes and trigger the build. The build might fail because we have not set the parameters for "inventory" and "gitBranch"
+
+* Click on the "feature/jenkinspipeline-stages" branch and click on "Build with Parameters" to set the inventory and gitBranch parameters and click on "Build" to trigger the build.
+
+![](./img/set_parameters.png)
+
+This would run run all stages specified in the Jenkinsfile. See below the output of the stage that triggers the ansible-playbook to configure the nginx and database servers.
 
 
+![](./img/pileline_stages1.png)
 
+![](./img/Ansible_run.png)
+
+Notice that we can now specify which environment we want to deploy the configuration to. Simply configure your "sit" inventory file, go to "Build with Parameters" and type "sit" and "Build" to run the pipeline against the sit environment.
+
+As I mentioned earlier "The SIT (System Integration Testing) and UAT (User Acceptance Testing) environments are essentially the webservers holding the application so they don't need additional installation or configuration." So to avoid spinning up new servers for this I will be copying the contents of the dev inventory file into the sit inventory file.
+
+```SHELL
+[tooling]
+<SIT-Tooling-Web-Server-Private-IP-Address>
+
+[todo]
+<SIT-Todo-Web-Server-Private-IP-Address>
+
+[nginx]
+<SIT-Nginx-Private-IP-Address>
+
+[db]
+<SIT-DB-Server-Private-IP-Address>
+
+[db:vars]
+ansible_user=ec2-user
+```
+
+To run this against the sit environment, we first need to setup the webserver ansible configurations. To do this:
+
+* Under the "roles" directory, create a new role called "webserver"
+```SHELL
+ansible-galaxy init webserver
+```
+* Navigate to "Roles > webserver > tasks > main.yml" and add the below block of codes:
+
+```YAML
+---
+- name: recursively remove /var/www/html directory
+  become: true
+  ansible.builtin.file:
+   path: /var/www/html
+   state: absent
+
+- name: install apache
+  become: true
+  ansible.builtin.apt:
+   name: "{{ item }}"
+   state: present
+  loop: [ 'apache2', 'php', 'libapache2-mod-php', 'php7.4-fpm', 'libapache2-mod-fcgid', 'php-mysql' ]
+
+- name: clone a repo
+  become: true
+  ansible.builtin.git:
+   repo: https://github.com/doutimi3/devops_tooling.git
+   dest: /var/www/html
+   force: yes
+
+- name: copy html content to one level up
+  become: true
+  command: cp -r /var/www/html/html/ /var/www/
+
+- name: Start service apache2, if not started
+  become: true
+  ansible.builtin.service:
+   name: apache2
+   state: started
+
+- name: recursively remove /var/www/html/html/ directory
+  become: true
+  ansible.builtin.file:
+   path: /var/www/html/html
+   state: absent
+```
+* Navigate to "Roles > webserver > templates" directory, create a new file file called "apache-conf.j2" and add the below block of codes:
+
+```SHELL
+<VirtualHost *:80>
+    ServerAdmin webmaster@{{ domain }}
+    ServerName {{ domain }}
+    ServerAlias www.{{ domain }}
+    DocumentRoot /var/www/html
+    ErrorLog ${APACHE_LOG_DIR}/error.log
+    CustomLog ${APACHE_LOG_DIR}/access.log combined
+</VirtualHost>
+```
+* Navigate to "static-assignment" directory and create a new file called "webserver.yml" with the below content:
+
+```YAML
+---
+- hosts: tooling
+  roles:
+    - webserver
+```
+
+* Navigate to "playbooks" directory and add the below lines of code to the "site.yml" file:
+
+```YAML
+- hosts: tooling
+- name: deploy tooling website
+  ansible.builtin.import_playbook: ../static-assignments/webserver.yml
+```
+
+* Commit and push code to github, on the jenkins UI scan the repo again and build job with parameter. This time set the environment to "sit"
 
 
 
