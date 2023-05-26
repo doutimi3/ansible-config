@@ -1,0 +1,17 @@
+nginx-server ansible_host=172.31.38.23
+db-server ansible_host=172.31.47.92
+todo-server ansible_host=172.31.32.113
+tooling-server ansible_host=172.31.36.2
+
+
+[nginx]
+nginx-server ansible_user=ec2-user
+
+[db]
+db-server ansible_user=ubuntu
+
+[todo]
+todo-server ansible_user=ec2-user
+
+[tooling]
+tooling-server ansible_user=ec2-user
