@@ -15,3 +15,6 @@ todo-server ansible_user=ec2-user
 
 [tooling]
 tooling-server ansible_user=ec2-user
+
+[db:vars]
+ansible_python_interpreter=/usr/bin/python
