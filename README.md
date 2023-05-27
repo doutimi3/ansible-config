@@ -901,6 +901,9 @@ git clone https://github.com/doutimi3/php-todo.git
 
 ```SHELL
 # Install php and dependencies
+# Add EPEL package repo and install Remi repo
+sudo yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm
+sudo yum install -y dnf-utils http://rpms.remirepo.net/enterprise/remi-release-8.rpm
 sudo yum module reset php -y
 sudo yum module enable php:remi-7.4 -y
 sudo yum install -y php php-common php-mbstring php-opcache php-intl php-xml php-gd php-curl php-mysqlnd php-fpm php-json
@@ -1028,7 +1031,7 @@ pipeline {
 ```
 * php-todo app needs to connect to the database, so we will create a new database and user in the database for this application. This will be done using ansible. To do this, navigate back to the "ansible-config" directory, under Roles, navigate to the "mysql" role and in "defaults > main.yml", scroll down to the "databases" and "Users" section add the below line of codes:
 
-The host of the user must be the private ip address of the jenkins server.
+The host of the user must be the private ip address of the jenkins server. This is because the jenkins server would act as a client to connect to the database server.
 
 ```SHELL
 # Database
@@ -1045,6 +1048,62 @@ mysql_users:
     password: Password@123
     priv: '*.*:ALL,GRANT'
 ```
+
+* Commit these changes to the ansible-config directory and run the build on the jenkins UI.
+
+* Verify that this ran successfully
+![](./img/verify_db_user_creation_ansible.png)
+
+![](./img/verify_homestead_user_db_access.png)
+
+* Navigate back to the "php-todo" directory, commit and push changes to githbub.
+
+* Go the the Jenkins UI and create a new pipeline, select the "php-todo" as the github repo for this pipeline. Because we already have a Jenkinsfile in this repo, this will attempt to run the build for it will fail because we have not installed some dependencies on the Jenkins server.
+
+Notice that in the "Prepare Dependencies section" of the Jenkinsfile
+
+The required file by PHP is .env so we are renaming .env.sample to .env
+Composer is used by PHP to install all the dependent libraries used by the application
+php artisan uses the .env file to setup the required database objects – (After successful run of this step, login to the database, run show tables and you will see the tables being created for you)
+
+  * In the php-todo directory, update the ".env.sample" file with your database connection details:
+
+DB_Host: Private IP of database server.
+
+
+  ```SHELL
+DB_HOST=172.31.47.92
+DB_DATABASE=homestead
+DB_USERNAME=homestead
+DB_PASSWORD=Password@123
+DB_CONNECTION=mysql
+DB_PORT=3306
+```
+
+* Ensure the "binding Address" in the mysql config file (/etc/mysql/mysql.conf.d/mysqld.cnf) have been changed to 0.0.0.0 to allow connection from any ip address and mysql server have been restarted if this config file was modified.
+
+* Install phpunit and phploc: This will be used by the code analysis stage of our pipeline:
+
+```SHELL
+sudo dnf --enablerepo=remi install php-phpunit-phploc -y
+sudo wget -O phpunit https://phar.phpunit.de/phpunit-7.phar
+chmod +x phpunit
+sudo yum install php-xdebug -y
+sudo yum install zip -y
+```
+
+* Enable xdebug: 
+  * Use the command mentioned earlier (php --ini | grep "php.ini") to find the location of the php.ini file.
+  * Once you have located the php.ini file, open it using a text editor.
+  * Look for the xdebug section in the php.ini file. If it doesn't exist, you may need to add it manually. Within the xdebug section, find or add the xdebug.mode directive and set it to 'coverage'. It should look like this:
+
+    ```SHELL
+    xdebug.mode = coverage
+    ```
+  * restart PHP-FPM (sudo systemctl restart php-fpm)
+
+* Push changes to github and build the php-todo pipeline
+
 
 
 
