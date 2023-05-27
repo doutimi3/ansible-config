@@ -37,7 +37,77 @@ You should have a subdomain list like this:
 
 ![](./img/domains.png)
 
-__STEP 1: Setup Ansible Configurations__
+**STEP 1: Set up Inventory files**
+
+1. Create an inventory file for all environments
+
+```SHELL
+cd inventory
+touch dev && touch uat && touch pentest && touch ci && touch preprod && touch prod && touch sit
+```
+
+2. Create the below instances and update the inventory files for ci and dev with the ip addresses:
+
+- ci
+
+nginx (RHEL 8, t2-micro), 
+sonarqube (ubuntu, t2-medium),
+artifactory (RHEL 8, t2-micro)
+
+
+- dev
+
+nginx, 
+todo webserver (RHEL 8, t2-micro),
+tooling webserver (RHEL 8, t2-micro)
+db (ubuntu, t2-micro)
+
+4. update the dev and ci inventory files with the private ip of the above servers
+
+ci
+
+```SHELL
+jenkins-server ansible_host=<Private-IP-Address>
+nginx-server ansible_host=<Private-IP-Address>
+sonarqube-server ansible_host=<Private-IP-Address>
+artifactory-server ansible_host=<Private-IP-Address>
+
+[jenkins]
+jenkins-server ansible_user=ec2-user
+
+[nginx]
+nginx-server ansible_user=ec2-user
+
+[sonarqube]
+sonarqube-server ansible_user=ubuntu
+
+[artifactory]
+artifactory-server ansible_user=ec2-user
+```
+
+dev
+
+```SHELL
+nginx-server ansible_host=<Private-IP-Address>
+db-server ansible_host=<Private-IP-Address>
+todo-server ansible_host=<Private-IP-Address>
+tooling-server ansible_host=<Private-IP-Address>
+
+
+[nginx]
+nginx-server ansible_user=ec2-user
+
+[db]
+db-server ansible_user=ubuntu
+
+[todo]
+todo-server ansible_user=ec2-user
+
+[tooling]
+tooling-server ansible_user=ec2-user
+```
+
+__STEP 2: Setup Jenkins Configurations__
 
 1. launch a t2-medium RHEL server to run jenkins and ansible, ssh into this instance and initialize a new git repo called "ansible-config"
 2. In the ansible-config directory create an inventory directory with inventory file for the different environments
@@ -151,87 +221,460 @@ pipeline {
 ![](./img/scan_now.png)
 
 * Refresh the page and both branches will start building automatically. You can go into Blue Ocean and see both branches there too.
+
+![](./img/two_branches.png)
+
 * In Blue Ocean, you can now see how the Jenkinsfile has caused a new step in the pipeline launch build for the new branch.
 
+![](./img/build_from_feature_branch.png)
 
 
-```SHELL
-touch dev && touch uat && touch pentest && touch ci && touch preprod && touch prod && touch sit
-```
+Next we will carry out the below steps:
 
-3. Create the below instances and update the inventory files for ci and dev with the ip addresses:
-
-- ci
-
-nginx (RHEL 8, t2-micro), 
-sonarqube (ubuntu, t2-medium),
-artifactory (RHEL 8, t2-micro)
-
-
-- dev
-
-nginx, 
-todo webserver (RHEL 8, t2-micro),
-tooling webserver (RHEL 8, t2-micro)
-db (ubuntu, t2-micro)
-
-4. update the dev and ci inventory files with the private ip of the above servers
-
-ci
+1. Create a pull request to merge the latest code into the main branch
+2. After merging the Pull Request, go back into your terminal and switch into the main branch.
+3. Pull the latest change.
+4. Create a new branch, add more stages into the Jenkinsfile to simulate below phases. 
+    1. Add a stage to clean up workspace at the beginning of the pipeline.
+   2. Echo "Package"
+   3. Echo "Deploy"
+   4. Clean up
 
 ```SHELL
-jenkins-server ansible_host=<Private-IP-Address>
-nginx-server ansible_host=<Private-IP-Address>
-sonarqube-server ansible_host=<Private-IP-Address>
-artifactory-server ansible_host=<Private-IP-Address>
+pipeline {
+  agent any
+  
+  stages {
+    stage("Initial Cleanup") {
+      steps {
+        dir("${WORKSPACE}") {
+          deleteDir()
+        }
+      }
+    }
 
-[jenkins]
-jenkins-server ansible_user=ec2-user
+    stage('Build') {
+      steps {
+        script {
+          sh 'echo "Building Stage"'
+        }
+      }
+    }
 
-[nginx]
-nginx-server ansible_user=ec2-user
-
-[sonarqube]
-sonarqube-server ansible_user=ubuntu
-
-[artifactory]
-artifactory-server ansible_user=ec2-user
+    stage('Test') {
+      steps {
+        script {
+          sh 'echo "Testing Stage"'
+        }
+      }
+    }
+    stage('Package') {
+      steps {
+        script {
+          sh 'echo "Packaging Stage"'
+        }
+      }
+    }
+    stage('Deploy') {
+      steps {
+        script {
+          sh 'echo "Deploying Stage"'
+        }
+      }
+    }
+    stage('Clean Up') {
+      steps {
+        cleanWs(cleanWhenAborted: true, cleanWhenFailure: true, cleanWhenNotBuilt: true, cleanWhenUnstable: true, deleteDirs: true)
+      }
+    }
+  }
+}
 ```
 
-dev
+5. Verify in Blue Ocean that all the stages are working, then merge your feature branch to the main branch
+
+![](./img/additional_stages_in_branch.png)
+
+6. Eventually, your main branch should have a successful pipeline like this in blue ocean
+
+![](./img/additional_stages-in_main.png)
+
+
+**STEP 3: Install Ansible and Setup Ansible Role for CI Environment**
+
+Three roles are required for the ci environment so we will be adding the below roles. To do this:
+
+* Install ansible on the jenkins server.
+
+```Shell
+sudo yum install ansible -y
+```
+
+* Install ansible dependencies to enable us run mysql and postgresql using ansible.
 
 ```SHELL
-nginx-server ansible_host=<Private-IP-Address>
-db-server ansible_host=<Private-IP-Address>
-todo-server ansible_host=<Private-IP-Address>
-tooling-server ansible_host=<Private-IP-Address>
+sudo yum install python3 python3-pip wget unzip git -y
 
+# Upgrade pip package
+sudo python3 -m pip install --upgrade setuptools
+sudo python3 -m pip install --upgrade pip
 
-[nginx]
-nginx-server ansible_user=ec2-user
+# Dependencies to run sql commands
+sudo python3 -m pip install PyMySQL
+sudo python3 -m pip install mysql-connector-python
+sudo python3 -m pip install psycopg2==2.7.5 --ignore-installed
 
-[db]
-db-server ansible_user=ubuntu
-
-[todo]
-todo-server ansible_user=ec2-user
-
-[tooling]
-tooling-server ansible_user=ec2-user
-
-[db:vars]
-ansible_python_interpreter=/usr/bin/python
+# For mysql db
+ansible-galaxy collection install community.mysql
 ```
-
-**STEP 2: Ansible Role for CI Environment**
-
-Three roles are required for the ci environment so we will be adding the below roles. TO do this:
 
 * Create a new directory called "roles" inside the "ansible-config" directory.
 * Initialize the below three roles using ansible-galaxy
 
-    * Sonarqube, Artifactory, nginx
-* 
+    * Sonarqube, Artifactory, nginx and mysql
+
+```SHELL
+cd roles
+ansible-galaxy init sonarqube
+ansible-galaxy init artifactory
+ansible-galaxy install geerlingguy.nginx -p . && mv geerlingguy.nginx/ nginxRole
+ansible-galaxy install geerlingguy.mysql -p . && mv geerlingguy.mysql/ ./mysql
+```
+
+**Why do we need SonarQube?**
+
+SonarQube is an open-source platform developed by SonarSource for continuous inspection of code quality, it is used to perform automatic reviews with static analysis of code to detect bugs, code smells, and security vulnerabilities. [Watch a short description here](https://youtu.be/vE39Fg8pvZg). There is a lot more hands on work ahead with SonarQube and Jenkins. So, the purpose of SonarQube will be clearer to you very soon.
+
+Why do we need Artifactory?
+Artifactory is a product by JFrog that serves as a binary repository manager. The binary repository is a natural extension to the source code repository, in that the outcome of your build process is stored. It can be used for certain other automation, but we will it strictly to manage our build artifacts.
+
+[Watch a short description here](https://youtu.be/upJS4R6SbgM) Focus more on the first 10.08 mins
+
+**STEP 4: Running Ansible Playbook from Jenkins**
+
+Now that you have a broad overview of a typical Jenkins pipeline. Let us get the actual Ansible deployment to work by:
+
+1. Installing Ansible plugin in Jenkins UI: Navigate to Dashboard>Manage Jenkins>Plugin Manager>Available plugins and search for "Ansible". Install without restart.
+
+![](./img/install_ansible_pluggin.png)
+
+Go back to "Dashboard>Manage Jenkins>Global Tools Configuration" and enter the below configuration under "Ansible"
+
+![](./img/set_ansible_path.png)
+
+2. Creating Jenkinsfile from scratch. (Delete all you currently have in there and start all over to get Ansible to run successfully). This should take care of the following considerations:
+
+* This jenkinsfile should be parameterized to run against different environments without editting the file directly.
+* It should include a stage to checkout the SCM to a specified branch.
+* Jenkins should export the ANSIBLE_CONFIG environment variable. ansible.cfg file should be added to the "deploy" folder alongside the Jenkinsfile. This way, anyone can easily tell that everything in there are related to deployment.
+* Dynamically set the environment variables (very importantly, the Role variable) each time the job runs.
+* This pipeline should always delete the already existing files generated from previous runs. This is done by adding a clean up step at the begining of the script.
+* Using the "Pipeline Syntax tool in jenkins, generate the syntax to create environment variables to set dynamically each time the pipeline is ran and run the ansible-playbook.
+* A final step to clean up the workspace after build.
+
+To run the ansible playbooks against the servers, jenkins would need to ssh into the server and it requires the private keys of the servers to do this. I used just one key for all servers so I need to add this key to jenkins credentials. To do this, navigate to "Manage Jenkins>Credentials>Global Credentials>Add Credentials" and configure it as shown below. In the "Key" section, copy your private key and add it to the box below. Jenkins would use this credentials to connect to the servers while running the ansible playbook.
+
+![](./img/add_private_key.png)
+
+**Ansible.cfg file**
+
+```SHELL
+[defaults]
+timeout = 160
+callback_whitelist = profile_tasks
+log_path=~/ansible.log
+host_key_checking = False
+gathering = smart
+ansible_python_interpreter=/usr/bin/python3
+allow_world_readable_tmpfiles=true
+
+
+[ssh_connection]
+ssh_args = -o ControlMaster=auto -o ControlPersist=30m -o ControlPath=/tmp/ansible-ssh-%h-%p-%r -o ServerAliveInterval=60 -o ServerAliveCountMax=60 -o ForwardAgent=yes
+```
+
+**Jenkinsfile**
+
+```JSON
+pipeline {
+  agent any
+
+  environment {
+      ANSIBLE_CONFIG="${WORKSPACE}/deploy/ansible.cfg"
+    }
+
+  parameters {
+      string(name: 'inventory', defaultValue: 'dev',  description: 'This is the inventory file for the environment to deploy configuration')
+      string(name: 'gitBranch', defaultValue: 'feature/jenkinspipeline-stages', description: 'SCM Git branch to checkout')
+    }
+
+  stages{
+      stage("Initial cleanup") {
+          steps {
+            dir("${WORKSPACE}") {
+              deleteDir()
+            }
+          }
+        }
+
+      stage('Checkout SCM') {
+         steps{
+            git branch: "${gitBranch}", url: 'https://github.com/doutimi3/ansible-config.git'
+         }
+       }
+
+      stage('Prepare Ansible For Execution') {
+        steps {
+          sh 'echo ${WORKSPACE}' 
+          sh 'sed -i "3 a roles_path=${WORKSPACE}/roles" ${WORKSPACE}/deploy/ansible.cfg'  
+        }
+     }
+
+      stage('Run Ansible playbook') {
+        steps {
+           ansiblePlaybook become: true, colorized: true, credentialsId: 'private-key', disableHostKeyChecking: true, installation: 'ansible', inventory: 'inventory/${inventory}', playbook: 'playbooks/site.yml'
+         }
+      }
+
+      stage('Clean Workspace after build'){
+        steps{
+          cleanWs(cleanWhenAborted: true, cleanWhenFailure: true, cleanWhenNotBuilt: true, cleanWhenUnstable: true, deleteDirs: true)
+        }
+      }
+   }
+
+}
+```
+
+In the mysql role, navigate to "defaults>main.yml" and add the below block of code under the "Databases" section.
+
+```YAML
+# Databases.
+mysql_databases:
+  - name: tooling
+    collation: utf8_general_ci
+    encoding: utf8
+    replicate: 1
+```
+
+Also add the below block of code under the "Users" section
+```SHELL
+# Users.
+mysql_users:
+  - name: webaccess
+    host: 0.0.0.0
+    password: secret
+    priv: '*.*:ALL,GRANT'
+```
+
+In the nginxRole role, navigate to "defaults>main.yml" and clear all contents of this file.
+
+Still in the nginxRole, navigate to "tasks>main.yml", clear all contents and add the below block of code:
+
+```YAML
+---
+# tasks file for nginx
+- name: install nginx on the webserver
+  ansible.builtin.yum:
+      name: nginx
+      state: present
+
+
+- name: ensure nginx is started and enabled
+  ansible.builtin.service:
+     name: nginx
+     state: started 
+     enabled: yes
+
+- name: install PHP
+  ansible.builtin.yum:
+    name:
+      - php 
+      - php-mysqlnd
+      - php-gd 
+      - php-curl
+    state: present
+```
+Still in the nginxRole, navigate to "tasks>main.yml", delete all other yml files aside from the "main.yml" file. 
+
+Still in the nginxRole, navigate to "templates" directory, delete all configuration files and create a new file call "nginx.conf" with the below content. 
+
+```SHELL
+upstream backend {
+      server  <private ip> weight=5; 
+      server  <private ip> weight=5;
+      
+   }
+
+   # This server accepts all traffic to port 80 and passes it to the upstream. 
+   # Notice that the upstream name and the proxy_pass need to match.
+
+   server {
+      listen 80; 
+
+      location / {
+          proxy_pass http://backend;
+      }
+   }
+```
+* Create another folder called "static-assignments".
+* Create a new file called nginx.yml inside the above folder and add the below lines of code:
+
+```YAML
+---
+- hosts: nginx
+  become: true
+  roles:
+     - nginxRole
+```
+
+* Add another file called "database.yml" inside the above folder with the below lines of code:
+```YAML
+---
+- hosts: db
+  roles:
+    - mysql
+```
+
+* Create a new folder called "playbooks", inside this folder, create a file called "site.yml" and add the below block of code
+
+```YAML
+---
+- hosts: db
+- name: database assignment
+  ansible.builtin.import_playbook: ../static-assignments/database.yml
+
+- hosts: nginx
+- name: nginx assignment
+  ansible.builtin.import_playbook: ../static-assignments/nginx.yml
+```
+
+* Commit changes to the feature/pipeline-stages branch, confirm that this worked as expected on jenkins and create a pull request to merge it to main branch.
+
+* On the Jenkins UI, navigate to "Dashboard>ansible-config" and click on "Scan repository Now". This will scan the repo to include the recent changes and trigger the build. The build might fail because we have not set the parameters for "inventory" and "gitBranch"
+
+* Click on the "feature/jenkinspipeline-stages" branch and click on "Build with Parameters" to set the inventory and gitBranch parameters and click on "Build" to trigger the build.
+
+![](./img/set_parameters.png)
+
+This would run run all stages specified in the Jenkinsfile. See below the output of the stage that triggers the ansible-playbook to configure the nginx and database servers.
+
+
+![](./img/pileline_stages1.png)
+
+![](./img/Ansible_run.png)
+
+Notice that we can now specify which environment we want to deploy the configuration to. Simply configure your "sit" inventory file, go to "Build with Parameters" and type "sit" and "Build" to run the pipeline against the sit environment.
+
+As I mentioned earlier "The SIT (System Integration Testing) and UAT (User Acceptance Testing) environments are essentially the webservers holding the application so they don't need additional installation or configuration." So to avoid spinning up new servers for this I will be copying the contents of the dev inventory file into the sit inventory file.
+
+```SHELL
+[tooling]
+<SIT-Tooling-Web-Server-Private-IP-Address>
+
+[todo]
+<SIT-Todo-Web-Server-Private-IP-Address>
+
+[nginx]
+<SIT-Nginx-Private-IP-Address>
+
+[db]
+<SIT-DB-Server-Private-IP-Address>
+
+[db:vars]
+ansible_user=ec2-user
+```
+
+To run this against the sit environment, we first need to setup the webserver ansible configurations. To do this:
+
+* Under the "roles" directory, create a new role called "webserver"
+```SHELL
+ansible-galaxy init webserver
+```
+* Navigate to "Roles > webserver > tasks > main.yml" and add the below block of codes:
+
+```YAML
+---
+- name: recursively remove /var/www/html directory
+  become: true
+  ansible.builtin.file:
+   path: /var/www/html
+   state: absent
+
+- name: install apache
+  become: true
+  ansible.builtin.apt:
+   name: "{{ item }}"
+   state: present
+  loop: [ 'apache2', 'php', 'libapache2-mod-php', 'php7.4-fpm', 'libapache2-mod-fcgid', 'php-mysql' ]
+
+- name: clone a repo
+  become: true
+  ansible.builtin.git:
+   repo: https://github.com/doutimi3/devops_tooling.git
+   dest: /var/www/html
+   force: yes
+
+- name: copy html content to one level up
+  become: true
+  command: cp -r /var/www/html/html/ /var/www/
+
+- name: Start service apache2, if not started
+  become: true
+  ansible.builtin.service:
+   name: apache2
+   state: started
+
+- name: recursively remove /var/www/html/html/ directory
+  become: true
+  ansible.builtin.file:
+   path: /var/www/html/html
+   state: absent
+```
+* Navigate to "Roles > webserver > templates" directory, create a new file file called "apache-conf.j2" and add the below block of codes:
+
+```SHELL
+<VirtualHost *:80>
+    ServerAdmin webmaster@{{ domain }}
+    ServerName {{ domain }}
+    ServerAlias www.{{ domain }}
+    DocumentRoot /var/www/html
+    ErrorLog ${APACHE_LOG_DIR}/error.log
+    CustomLog ${APACHE_LOG_DIR}/access.log combined
+</VirtualHost>
+```
+* Navigate to "static-assignment" directory and create a new file called "webserver.yml" with the below content:
+
+```YAML
+---
+- hosts: tooling
+  roles:
+    - webserver
+```
+
+* Navigate to "playbooks" directory and add the below lines of code to the "site.yml" file:
+
+```YAML
+- hosts: tooling
+- name: deploy tooling website
+  ansible.builtin.import_playbook: ../static-assignments/webserver.yml
+```
+
+* Commit and push code to github, on the jenkins UI scan the repo again and build job with parameter. This time set the environment to "sit"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
