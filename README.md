@@ -395,7 +395,7 @@ ssh_args = -o ControlMaster=auto -o ControlPersist=30m -o ControlPath=/tmp/ansib
 
 **Jenkinsfile**
 
-```JSON
+```SHELL
 pipeline {
   agent any
 
@@ -665,6 +665,454 @@ ansible-galaxy init webserver
 ![](./img/sit_run.png)
 
 ![](./img/tooling_set.png)
+
+
+**STEP 4: CI/CD Pipeline for Todo Application**
+
+Here we will introduce another PHP application to add to the list of software products we are managing in our infrastructure. The good thing with this particular application is that it has unit tests, and it is an ideal application to show an end-to-end CI/CD pipeline for a particular application.
+
+
+* **Update Artifactory Role:** Our goal here is to deploy the application onto servers directly from Artifactory rather than from git. If you have not updated Ansible with an Artifactory role, simply use this guide to create an Ansible role for Artifactory (ignore the Nginx part). [Configure Artifactory on Ubuntu 20.04](https://www.howtoforge.com/tutorial/ubuntu-jfrog/). 
+
+* Launch a t2.medium RHEL 8 instance and update the ci inventory file with the server private ip.
+* Navigate to the "ansible-config directory > Roles" and create a new role called "artifactory" using ansible-galaxy if this have not been created already.
+* Delete the following directories in the "artifactory directory": files, meta, tests, vars.
+* Update the "Defaults > main.yml" with the below block of code:
+```YAML
+# defaults file for artifactory
+
+# The version of artifactory to install
+artifactory_version: 7.24.3
+
+# Set this to true when SSL is enabled (to use artifactory_nginx_ssl role), default to false (implies artifactory uses artifactory_nginx role )
+artifactory_nginx_ssl_enabled: false
+
+# Set this to false when ngnix is disabled, defaults to true (implies artifactory uses artifactory_nginx role )
+artifactory_nginx_enabled: false
+
+# Provide single node license
+# artifactory_single_license:
+
+# Provide individual (HA) licenses file separated by new line and 2-space indentation and set artifactory_ha_enabled: true.
+# Example:
+# artifactory_licenses: |-
+#   <license_1>
+
+#   <license_2>
+
+#   <license_3>
+
+# To enable HA, set to true
+artifactory_ha_enabled: false
+
+# By default, all nodes are primary (CNHA) - https://www.jfrog.com/confluence/display/JFROG/High+Availability#HighAvailability-Cloud-NativeHighAvailability
+artifactory_taskAffinity: any
+
+# The location where Artifactory should install
+jfrog_home_directory: /opt/jfrog
+
+# Pick the Artifactory flavour to install, can be also cpp-ce/jcr/pro
+artifactory_flavour: pro
+
+artifactory_extra_java_opts: -server -Xms512m -Xmx2g -Xss256k -XX:+UseG1GC
+artifactory_system_yaml_template: system.yaml.j2
+artifactory_tar_file_name: jfrog-artifactory-pro-{{ artifactory_version }}-linux.tar.gz
+artifactory_home: "{{ jfrog_home_directory }}/artifactory"
+artifactory_tar: https://releases.jfrog.io/artifactory/artifactory-pro/org/artifactory/pro/jfrog-artifactory-pro/{{ artifactory_version }}/{{ artifactory_tar_file_name }}
+artifactory_untar_home: "{{ jfrog_home_directory }}/artifactory-{{ artifactory_flavour }}-{{ artifactory_version }}"
+
+# Timeout in seconds for URL request
+artifactory_download_timeout: 10
+
+postgres_driver_version: 42.2.23
+postgres_driver_download_url: https://repo1.maven.org/maven2/org/postgresql/postgresql/{{ postgres_driver_version }}/postgresql-{{ postgres_driver_version }}.jar
+
+artifactory_user: artifactory
+artifactory_group: artifactory
+
+artifactory_daemon: artifactory
+
+artifactory_uid: 1030
+artifactory_gid: 1030
+
+# if this is an upgrade
+artifactory_upgrade_only: false
+
+#default username and password
+artifactory_admin_username: admin
+artifactory_admin_password: password
+
+artifactory_service_file: /lib/systemd/system/artifactory.service
+
+# Provide binarystore XML content below with 2-space indentation
+artifactory_binarystore: |-
+  <?xml version="1.0" encoding="UTF-8"?>
+  <config version="2">
+      <chain template="cluster-file-system"/>
+  </config>
+
+# Provide systemyaml content below with 2-space indentation
+artifactory_systemyaml: |-
+  configVersion: 1
+  shared:
+    security:
+      joinKey: "{{ join_key }}"
+    extraJavaOpts: "{{ artifactory_extra_java_opts }}"
+    node:
+      id: {{ ansible_hostname }}
+      ip: {{ ansible_host }}
+      taskAffinity: {{ artifactory_taskAffinity }}
+      haEnabled: {{ artifactory_ha_enabled }}
+    database:
+      type: "{{ artifactory_db_type }}"
+      driver: "{{ artifactory_db_driver }}"
+      url: "{{ artifactory_db_url }}"
+      username: "{{ artifactory_db_user }}"
+      password: "{{ artifactory_db_password }}"
+  router:
+    entrypoints:
+      internalPort: 8046
+
+# Note: artifactory_systemyaml_override is by default false,  if you want to change default artifactory_systemyaml
+artifactory_systemyaml_override: false
+```
+* Under "templates", add a new file called "bash-profile.j2" and update it with the below text to export environment variables:
+
+```SHELL
+export JAVA_HOME=$(dirname $(dirname $(readlink $(readlink $(which javac)))))
+export PATH=$PATH:$JAVA_HOME/bin
+export CLASSPATH=.:$JAVA_HOME/jre/lib:$JAVA_HOME/lib:$JAVA_HOME/lib/tools.jar
+```
+
+* Update "tasks > main.yml" with the below block of code:
+```YAML
+---
+# tasks file for artifactory
+
+- name: install java 11
+  ansible.builtin.yum:
+    name: java-11-openjdk-devel
+    state: present
+
+- name: install java 11
+  ansible.builtin.yum:
+    name: 
+      - wget
+      - unzip
+    state: present
+
+- name: Configuring java path
+  ansible.builtin.template:
+    src: templates/bash-profile.j2
+    dest: .bash_profile
+  
+
+- name: reload the /etc/profile
+  shell: source ~/.bash_profile
+
+
+- name: add the repository key to repos list
+  ansible.builtin.get_url:
+    url:  https://releases.jfrog.io/artifactory/artifactory-rpms/artifactory-rpms.repo 
+    dest: /home/ec2-user/jfrog-artifactory-rpms.repo
+    mode: '0755'
+ 
+- name: Copy the downloaded file to the etc repo
+  ansible.builtin.copy:
+    src: /home/ec2-user/jfrog-artifactory-rpms.repo
+    dest: /etc/yum.repos.d/jfrog-artifactory-rpms.repo
+    remote_src: yes
+    follow: yes
+
+- name: update cache
+  ansible.builtin.yum:
+    update_cache: yes
+
+- name: install artifactory
+  ansible.builtin.yum:
+    name: jfrog-artifactory-oss
+    state: present
+
+- name: start and enable artifactory
+  ansible.builtin.service:
+    name: artifactory
+    state: started
+    enabled: yes
+```
+* Update "handlers > main.yml" with the below block of code:
+```YAML
+---
+# handlers file for distribution
+- name: restart artifactory
+  become: yes
+  systemd:
+    name: "{{ artifactory_daemon }}"
+    state: restarted
+
+```
+* Navigate to "ansible-config > static-assignments" directory and create a new file called "artifactory.yml", update it with the below block of code:
+
+```YAML
+---
+- hosts: artifactory
+  become: true
+  roles:
+    - artifactory
+```
+* Navigate to "ansible-config > playbooks" directory and append the below lines to "site.yml":
+
+```YAML
+- hosts: artifactory
+- name: artifactory assignment
+  ansible.builtin.import_playbook: ../static-assignments/artifactory.yml
+```
+* Commit and push changes to github.
+
+* On the jenkins UI, scan the repository again, change the inventory parameter to "ci" and run the build against the ci environment.
+
+![](./img/installed_artifactory.png)
+
+* Grab the public ip of the articatory server, ensure port 8081 is open on the artifactory server and accesss jfrog artifactory using the url in this format: http://<public_ip>/:8081
+
+![](./img/jfrog_login.png)
+
+Username: admin
+default password: password
+
+* Login, click on "Get started" and set a new password of your choice, skip the next steps and click on "finish".
+
+* Next, we will create a local repository to store the artifacts for the Todo application. 
+
+  * Click on "Create a repository" > "Add repository" > Select "Local" > Click on "Generic" and enter the name of the application as the "Repository key" and leave all other settings as default. Save and close:
+
+![](./img/setup_localRepo_artifactory.png)
+
+
+* **Prepare Jenkins:**
+1. Fork the repository below into your GitHub account
+```SHELL
+https://github.com/darey-devops/php-todo.git
+```
+2. Clone the repository to your local machine
+```SHELL
+git clone https://github.com/doutimi3/php-todo.git
+```
+
+3. On the Jenkins server, install PHP, its dependencies and Composer tool (Feel free to do this manually at first, then update your Ansible accordingly later)
+
+```SHELL
+# Install php and dependencies
+# Add EPEL package repo and install Remi repo
+sudo yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm
+sudo yum install -y dnf-utils http://rpms.remirepo.net/enterprise/remi-release-8.rpm
+sudo yum module reset php -y
+sudo yum module enable php:remi-7.4 -y
+sudo yum install -y php php-common php-mbstring php-opcache php-intl php-xml php-gd php-curl php-mysqlnd php-fpm php-json
+sudo systemctl start php-fpm
+sudo systemctl enable php-fpm
+```
+
+Install Composer and check the version installed
+
+```SHELL
+# Install composer
+curl -sS https://getcomposer.org/installer | php
+sudo mv composer.phar /usr/bin/composer
+composer --version
+```
+4. Install Jenkins plugins
+* **Plot plugin:** This will be used to display tests reports and code coverage information.
+To install, On the Jenkins UI, navigate to "Dashboard > Manage Jenkins > Manage Plugins > Available Plugins" and search for "plot", install without restart.
+
+* **Artifactory plugin:** This will be used to easily upload code artifacts into an Artifactory server. To install, on the Jenkins UI, navigate to "Dashboard > Manage Jenkins > Manage Plugins > Available Plugins" and search for "Artifactory", install without restart.
+
+5. In Jenkins UI configure Artifactory
+
+* On the jenkins UI navigate to "Dashboard > Manage Jenkins > Configure System", scroll down to "JFrog" section, click on "Add JFrog Instance" and Configure the server ID, URL, Credentials,and run Test Connection.
+
+![](./img/Jenkins_jfrog_config.png)
+
+**Integrate Artifactory repository with Jenkins**
+* Open the php-todo directory on a new terminal and create a Jenkinsfile inside the php-todo directory. Update it with the below clode of code:
+
+```SHELL
+pipeline {
+    agent any
+
+  stages {
+
+     stage("Initial cleanup") {
+          steps {
+            dir("${WORKSPACE}") {
+              deleteDir()
+            }
+          }
+        }
+
+    stage('Checkout SCM') {
+      steps {
+            git branch: 'main', url: 'https://github.com/doutimi3/php-todo.git'
+      }
+    }
+
+    stage('Prepare Dependencies') {
+      steps {
+             sh 'mv .env.sample .env'
+             sh 'composer install'
+             sh 'php artisan migrate'
+             sh 'php artisan db:seed'
+             sh 'php artisan key:generate'
+      }
+    }
+
+    stage('Execute Unit Tests') {
+      steps {
+        sh './vendor/bin/phpunit'
+      }
+    }
+
+    stage('Code Analysis') {
+      steps {
+        sh 'phploc app/ --log-csv build/logs/phploc.csv'
+      }
+    }
+
+    stage('Plot Code Coverage Report') {
+      steps {
+
+            plot csvFileName: 'plot-396c4a6b-b573-41e5-85d8-73613b2ffffb.csv', csvSeries: [[displayTableFlag: false, exclusionValues: 'Lines of Code (LOC),Comment Lines of Code (CLOC),Non-Comment Lines of Code (NCLOC),Logical Lines of Code (LLOC)                          ', file: 'build/logs/phploc.csv', inclusionFlag: 'INCLUDE_BY_STRING', url: '']], group: 'phploc', numBuilds: '100', style: 'line', title: 'A - Lines of code', yaxis: 'Lines of Code'
+            plot csvFileName: 'plot-396c4a6b-b573-41e5-85d8-73613b2ffffb.csv', csvSeries: [[displayTableFlag: false, exclusionValues: 'Directories,Files,Namespaces', file: 'build/logs/phploc.csv', inclusionFlag: 'INCLUDE_BY_STRING', url: '']], group: 'phploc', numBuilds: '100', style: 'line', title: 'B - Structures Containers', yaxis: 'Count'
+            plot csvFileName: 'plot-396c4a6b-b573-41e5-85d8-73613b2ffffb.csv', csvSeries: [[displayTableFlag: false, exclusionValues: 'Average Class Length (LLOC),Average Method Length (LLOC),Average Function Length (LLOC)', file: 'build/logs/phploc.csv', inclusionFlag: 'INCLUDE_BY_STRING', url: '']], group: 'phploc', numBuilds: '100', style: 'line', title: 'C - Average Length', yaxis: 'Average Lines of Code'
+            plot csvFileName: 'plot-396c4a6b-b573-41e5-85d8-73613b2ffffb.csv', csvSeries: [[displayTableFlag: false, exclusionValues: 'Cyclomatic Complexity / Lines of Code,Cyclomatic Complexity / Number of Methods ', file: 'build/logs/phploc.csv', inclusionFlag: 'INCLUDE_BY_STRING', url: '']], group: 'phploc', numBuilds: '100', style: 'line', title: 'D - Relative Cyclomatic Complexity', yaxis: 'Cyclomatic Complexity by Structure'      
+            plot csvFileName: 'plot-396c4a6b-b573-41e5-85d8-73613b2ffffb.csv', csvSeries: [[displayTableFlag: false, exclusionValues: 'Classes,Abstract Classes,Concrete Classes', file: 'build/logs/phploc.csv', inclusionFlag: 'INCLUDE_BY_STRING', url: '']], group: 'phploc', numBuilds: '100', style: 'line', title: 'E - Types of Classes', yaxis: 'Count'
+            plot csvFileName: 'plot-396c4a6b-b573-41e5-85d8-73613b2ffffb.csv', csvSeries: [[displayTableFlag: false, exclusionValues: 'Methods,Non-Static Methods,Static Methods,Public Methods,Non-Public Methods', file: 'build/logs/phploc.csv', inclusionFlag: 'INCLUDE_BY_STRING', url: '']], group: 'phploc', numBuilds: '100', style: 'line', title: 'F - Types of Methods', yaxis: 'Count'
+            plot csvFileName: 'plot-396c4a6b-b573-41e5-85d8-73613b2ffffb.csv', csvSeries: [[displayTableFlag: false, exclusionValues: 'Constants,Global Constants,Class Constants', file: 'build/logs/phploc.csv', inclusionFlag: 'INCLUDE_BY_STRING', url: '']], group: 'phploc', numBuilds: '100', style: 'line', title: 'G - Types of Constants', yaxis: 'Count'
+            plot csvFileName: 'plot-396c4a6b-b573-41e5-85d8-73613b2ffffb.csv', csvSeries: [[displayTableFlag: false, exclusionValues: 'Test Classes,Test Methods', file: 'build/logs/phploc.csv', inclusionFlag: 'INCLUDE_BY_STRING', url: '']], group: 'phploc', numBuilds: '100', style: 'line', title: 'I - Testing', yaxis: 'Count'
+            plot csvFileName: 'plot-396c4a6b-b573-41e5-85d8-73613b2ffffb.csv', csvSeries: [[displayTableFlag: false, exclusionValues: 'Logical Lines of Code (LLOC),Classes Length (LLOC),Functions Length (LLOC),LLOC outside functions or classes ', file: 'build/logs/phploc.csv', inclusionFlag: 'INCLUDE_BY_STRING', url: '']], group: 'phploc', numBuilds: '100', style: 'line', title: 'AB - Code Structure by Logical Lines of Code', yaxis: 'Logical Lines of Code'
+            plot csvFileName: 'plot-396c4a6b-b573-41e5-85d8-73613b2ffffb.csv', csvSeries: [[displayTableFlag: false, exclusionValues: 'Functions,Named Functions,Anonymous Functions', file: 'build/logs/phploc.csv', inclusionFlag: 'INCLUDE_BY_STRING', url: '']], group: 'phploc', numBuilds: '100', style: 'line', title: 'H - Types of Functions', yaxis: 'Count'
+            plot csvFileName: 'plot-396c4a6b-b573-41e5-85d8-73613b2ffffb.csv', csvSeries: [[displayTableFlag: false, exclusionValues: 'Interfaces,Traits,Classes,Methods,Functions,Constants', file: 'build/logs/phploc.csv', inclusionFlag: 'INCLUDE_BY_STRING', url: '']], group: 'phploc', numBuilds: '100', style: 'line', title: 'BB - Structure Objects', yaxis: 'Count'
+
+      }
+    } 
+
+    stage ('Package Artifact') {
+    steps {
+            sh 'zip -qr php-todo.zip ${WORKSPACE}/*'
+     }
+    } 
+
+    stage ('Upload Artifact to Artifactory') {
+          steps {
+            script { 
+                 def server = Artifactory.server 'artifactory'                 
+                 def uploadSpec = '''{
+                    "files": [
+                      {
+                       "pattern": "php-todo.zip",
+                       "target": "TodoApp/php-todo",
+                       "props": "type=zip;status=ready"
+                       }
+                    ]
+                 }'''
+
+                 server.upload spec: uploadSpec
+               }
+            } 
+
+        }
+
+    stage ('Deploy to Dev Environment') {
+      steps {
+        build job: 'ansible-config/main', parameters: [[$class: 'StringParameterValue', name: 'env', value: 'dev']], propagate: false, wait: true
+            }
+        }
+}
+}
+
+```
+* php-todo app needs to connect to the database, so we will create a new database and user in the database for this application. This will be done using ansible. To do this, navigate back to the "ansible-config" directory, under Roles, navigate to the "mysql" role and in "defaults > main.yml", scroll down to the "databases" and "Users" section add the below line of codes:
+
+The host of the user must be the private ip address of the jenkins server. This is because the jenkins server would act as a client to connect to the database server.
+
+```SHELL
+# Database
+mysql_databases:
+  - name: homestead
+    collation: utf8_general_ci
+    encoding: utf8
+    replicate: 1
+
+# User
+mysql_users:
+  - name: homestead
+    host: 172.31.39.95
+    password: Password@123
+    priv: '*.*:ALL,GRANT'
+```
+
+* Commit these changes to the ansible-config directory and run the build on the jenkins UI.
+
+* Verify that this ran successfully
+![](./img/verify_db_user_creation_ansible.png)
+
+![](./img/verify_homestead_user_db_access.png)
+
+* Navigate back to the "php-todo" directory, commit and push changes to githbub.
+
+* Go the the Jenkins UI and create a new pipeline, select the "php-todo" as the github repo for this pipeline. Because we already have a Jenkinsfile in this repo, this will attempt to run the build for it will fail because we have not installed some dependencies on the Jenkins server.
+
+Notice that in the "Prepare Dependencies section" of the Jenkinsfile
+
+The required file by PHP is .env so we are renaming .env.sample to .env
+Composer is used by PHP to install all the dependent libraries used by the application
+php artisan uses the .env file to setup the required database objects – (After successful run of this step, login to the database, run show tables and you will see the tables being created for you)
+
+  * In the php-todo directory, update the ".env.sample" file with your database connection details:
+
+DB_Host: Private IP of database server.
+
+
+  ```SHELL
+DB_HOST=172.31.47.92
+DB_DATABASE=homestead
+DB_USERNAME=homestead
+DB_PASSWORD=Password@123
+DB_CONNECTION=mysql
+DB_PORT=3306
+```
+
+* Ensure the "binding Address" in the mysql config file (/etc/mysql/mysql.conf.d/mysqld.cnf) have been changed to 0.0.0.0 to allow connection from any ip address and mysql server have been restarted if this config file was modified.
+
+* Install phpunit and phploc: This will be used by the code analysis stage of our pipeline:
+
+```SHELL
+sudo dnf --enablerepo=remi install php-phpunit-phploc -y
+sudo wget -O phpunit https://phar.phpunit.de/phpunit-7.phar
+chmod +x phpunit
+sudo yum install php-xdebug -y
+sudo yum install zip -y
+```
+
+* Enable xdebug: 
+  * Use the command mentioned earlier (php --ini | grep "php.ini") to find the location of the php.ini file.
+  * Once you have located the php.ini file, open it using a text editor.
+  * Look for the xdebug section in the php.ini file. If it doesn't exist, you may need to add it manually. Within the xdebug section, find or add the xdebug.mode directive and set it to 'coverage'. It should look like this:
+
+    ```SHELL
+    xdebug.mode = coverage
+    ```
+  * restart PHP-FPM (sudo systemctl restart php-fpm)
+
+* Push changes to github and build the php-todo pipeline
+
+
+
+
+
+
+
+
+
 
 
 

@@ -1,38 +1,43 @@
-Role Name
+artifactory
 =========
 
-A brief description of the role goes here.
+The artifactory role installs the Artifactory Pro software onto the host. Per the Vars below, it will configure a node as primary or secondary. This role uses secondary roles artifactory_nginx to install nginx.
 
 Requirements
 ------------
 
 Any pre-requisites that may not be covered by Ansible itself or the role should be mentioned here. For instance, if the role uses the EC2 module, it may be a good idea to mention in this section that the boto package is required.
 
+[To be Updated later]
+
 Role Variables
 --------------
 
-A description of the settable variables for this role should go here, including any variables that are in defaults/main.yml, vars/main.yml, and any variables that can/should be set via parameters to the role. Any variables that are read from other roles and/or the global scope (ie. hostvars, group vars, etc.) should be mentioned here as well.
+* server_name: mandatory This is the server name. eg. "artifactory.54.175.51.178.xip.io"
+* artifactory_upgrade_only: Perform an software upgrade only. Default is false.
 
-Dependencies
-------------
+Additional variables can be found in defaults/main.yml.
 
-A list of other roles hosted on Galaxy should go here, plus any details in regards to parameters that may need to be set for other roles, or variables that are used from other roles.
 
 Example Playbook
 ----------------
 
-Including an example of how to use your role (for instance, with variables passed in as parameters) is always nice for users too:
+Create a new playbook in the static-assignment directory and update it with the below code:
 
-    - hosts: servers
+    - hosts: host_name
       roles:
-         - { role: username.rolename, x: 42 }
+         - artifactory_role_name
+
+Update site.yml update "playbooks" directory with the below details:
+
+```YAML
+- hosts: host_name
+- name: artifactory assignment
+  ansible.builtin.import_playbook: ../static-assignments/artifactory.yml
+```
+
 
 License
 -------
 
 BSD
-
-Author Information
-------------------
-
-An optional section for the role authors to include contact information, or a website (HTML is not allowed).
