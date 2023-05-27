@@ -595,41 +595,41 @@ ansible-galaxy init webserver
 
 ```YAML
 ---
-- name: recursively remove /var/www/html directory
-  become: true
-  ansible.builtin.file:
-   path: /var/www/html
-   state: absent
-
+# tasks file for webserver
 - name: install apache
   become: true
-  ansible.builtin.apt:
-   name: "{{ item }}"
-   state: present
-  loop: [ 'apache2', 'php', 'libapache2-mod-php', 'php7.4-fpm', 'libapache2-mod-fcgid', 'php-mysql' ]
+  yum:
+    name: "httpd"
+    state: present
+
+- name: install git
+  become: true
+  yum:
+    name: "git"
+    state: present
 
 - name: clone a repo
   become: true
-  ansible.builtin.git:
-   repo: https://github.com/doutimi3/devops_tooling.git
-   dest: /var/www/html
-   force: yes
+  git:
+    repo: https://github.com/doutimi3/devops_tooling.git
+    dest: /var/www/html
+    force: yes
 
 - name: copy html content to one level up
   become: true
   command: cp -r /var/www/html/html/ /var/www/
 
-- name: Start service apache2, if not started
+- name: Start service httpd, if not started
   become: true
   ansible.builtin.service:
-   name: apache2
-   state: started
+    name: httpd
+    state: started
 
 - name: recursively remove /var/www/html/html/ directory
   become: true
   ansible.builtin.file:
-   path: /var/www/html/html
-   state: absent
+    path: /var/www/html/html
+    state: absent
 ```
 * Navigate to "Roles > webserver > templates" directory, create a new file file called "apache-conf.j2" and add the below block of codes:
 
