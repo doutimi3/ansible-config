@@ -395,7 +395,7 @@ ssh_args = -o ControlMaster=auto -o ControlPersist=30m -o ControlPath=/tmp/ansib
 
 **Jenkinsfile**
 
-```JSON
+```SHELL
 pipeline {
   agent any
 
@@ -661,6 +661,253 @@ ansible-galaxy init webserver
 ```
 
 * Commit and push code to github, on the jenkins UI scan the repo again and build job with parameter. This time set the environment to "sit"
+
+![](./img/sit_run.png)
+
+![](./img/tooling_set.png)
+
+**STEP 4: CI/CD Pipeline for Todo Application**
+
+Here we will introduce another PHP application to add to the list of software products we are managing in our infrastructure. The good thing with this particular application is that it has unit tests, and it is an ideal application to show an end-to-end CI/CD pipeline for a particular application.
+
+
+* **Update Artifactory Role:** Our goal here is to deploy the application onto servers directly from Artifactory rather than from git. If you have not updated Ansible with an Artifactory role, simply use this guide to create an Ansible role for Artifactory (ignore the Nginx part). [Configure Artifactory on Ubuntu 20.04](https://www.howtoforge.com/tutorial/ubuntu-jfrog/). 
+
+* Launch a t2.medium RHEL 8 instance and update the ci inventory file with the server private ip.
+* Navigate to the "ansible-config directory > Roles" and create a new role called "artifactory" using ansible-galaxy if this have not been created already.
+* Delete the following directories in the "artifactory directory": files, meta, tests, vars.
+* Update the "Defaults > main.yml" with the below block of code:
+```YAML
+# defaults file for artifactory
+
+# The version of artifactory to install
+artifactory_version: 7.24.3
+
+# Set this to true when SSL is enabled (to use artifactory_nginx_ssl role), default to false (implies artifactory uses artifactory_nginx role )
+artifactory_nginx_ssl_enabled: false
+
+# Set this to false when ngnix is disabled, defaults to true (implies artifactory uses artifactory_nginx role )
+artifactory_nginx_enabled: false
+
+# Provide single node license
+# artifactory_single_license:
+
+# Provide individual (HA) licenses file separated by new line and 2-space indentation and set artifactory_ha_enabled: true.
+# Example:
+# artifactory_licenses: |-
+#   <license_1>
+
+#   <license_2>
+
+#   <license_3>
+
+# To enable HA, set to true
+artifactory_ha_enabled: false
+
+# By default, all nodes are primary (CNHA) - https://www.jfrog.com/confluence/display/JFROG/High+Availability#HighAvailability-Cloud-NativeHighAvailability
+artifactory_taskAffinity: any
+
+# The location where Artifactory should install
+jfrog_home_directory: /opt/jfrog
+
+# Pick the Artifactory flavour to install, can be also cpp-ce/jcr/pro
+artifactory_flavour: pro
+
+artifactory_extra_java_opts: -server -Xms512m -Xmx2g -Xss256k -XX:+UseG1GC
+artifactory_system_yaml_template: system.yaml.j2
+artifactory_tar_file_name: jfrog-artifactory-pro-{{ artifactory_version }}-linux.tar.gz
+artifactory_home: "{{ jfrog_home_directory }}/artifactory"
+artifactory_tar: https://releases.jfrog.io/artifactory/artifactory-pro/org/artifactory/pro/jfrog-artifactory-pro/{{ artifactory_version }}/{{ artifactory_tar_file_name }}
+artifactory_untar_home: "{{ jfrog_home_directory }}/artifactory-{{ artifactory_flavour }}-{{ artifactory_version }}"
+
+# Timeout in seconds for URL request
+artifactory_download_timeout: 10
+
+postgres_driver_version: 42.2.23
+postgres_driver_download_url: https://repo1.maven.org/maven2/org/postgresql/postgresql/{{ postgres_driver_version }}/postgresql-{{ postgres_driver_version }}.jar
+
+artifactory_user: artifactory
+artifactory_group: artifactory
+
+artifactory_daemon: artifactory
+
+artifactory_uid: 1030
+artifactory_gid: 1030
+
+# if this is an upgrade
+artifactory_upgrade_only: false
+
+#default username and password
+artifactory_admin_username: admin
+artifactory_admin_password: password
+
+artifactory_service_file: /lib/systemd/system/artifactory.service
+
+# Provide binarystore XML content below with 2-space indentation
+artifactory_binarystore: |-
+  <?xml version="1.0" encoding="UTF-8"?>
+  <config version="2">
+      <chain template="cluster-file-system"/>
+  </config>
+
+# Provide systemyaml content below with 2-space indentation
+artifactory_systemyaml: |-
+  configVersion: 1
+  shared:
+    security:
+      joinKey: "{{ join_key }}"
+    extraJavaOpts: "{{ artifactory_extra_java_opts }}"
+    node:
+      id: {{ ansible_hostname }}
+      ip: {{ ansible_host }}
+      taskAffinity: {{ artifactory_taskAffinity }}
+      haEnabled: {{ artifactory_ha_enabled }}
+    database:
+      type: "{{ artifactory_db_type }}"
+      driver: "{{ artifactory_db_driver }}"
+      url: "{{ artifactory_db_url }}"
+      username: "{{ artifactory_db_user }}"
+      password: "{{ artifactory_db_password }}"
+  router:
+    entrypoints:
+      internalPort: 8046
+
+# Note: artifactory_systemyaml_override is by default false,  if you want to change default artifactory_systemyaml
+artifactory_systemyaml_override: false
+```
+* Under "templates", add a new file called "bash-profile.j2" and update it with the below text to export environment variables:
+
+```SHELL
+export JAVA_HOME=$(dirname $(dirname $(readlink $(readlink $(which javac)))))
+export PATH=$PATH:$JAVA_HOME/bin
+export CLASSPATH=.:$JAVA_HOME/jre/lib:$JAVA_HOME/lib:$JAVA_HOME/lib/tools.jar
+```
+
+* Update "tasks > main.yml" with the below block of code:
+```YAML
+---
+# tasks file for artifactory
+
+- name: install java 11
+  ansible.builtin.yum:
+    name: java-11-openjdk-devel
+    state: present
+
+- name: install java 11
+  ansible.builtin.yum:
+    name: 
+      - wget
+      - unzip
+    state: present
+
+- name: Configuring java path
+  ansible.builtin.template:
+    src: templates/bash-profile.j2
+    dest: .bash_profile
+  
+
+- name: reload the /etc/profile
+  shell: source ~/.bash_profile
+
+
+- name: add the repository key to repos list
+  ansible.builtin.get_url:
+    url:  https://releases.jfrog.io/artifactory/artifactory-rpms/artifactory-rpms.repo 
+    dest: /home/ec2-user/jfrog-artifactory-rpms.repo
+    mode: '0755'
+ 
+- name: Copy the downloaded file to the etc repo
+  ansible.builtin.copy:
+    src: /home/ec2-user/jfrog-artifactory-rpms.repo
+    dest: /etc/yum.repos.d/jfrog-artifactory-rpms.repo
+    remote_src: yes
+    follow: yes
+
+- name: update cache
+  ansible.builtin.yum:
+    update_cache: yes
+
+- name: install artifactory
+  ansible.builtin.yum:
+    name: jfrog-artifactory-oss
+    state: present
+
+- name: start and enable artifactory
+  ansible.builtin.service:
+    name: artifactory
+    state: started
+    enabled: yes
+```
+* Update "handlers > main.yml" with the below block of code:
+```YAML
+---
+# handlers file for distribution
+- name: restart artifactory
+  become: yes
+  systemd:
+    name: "{{ artifactory_daemon }}"
+    state: restarted
+
+```
+* Navigate to "ansible-config > static-assignments" directory and create a new file called "artifactory.yml", update it with the below block of code:
+
+```YAML
+---
+- hosts: artifactory
+  become: true
+  roles:
+    - artifactory
+```
+* Navigate to "ansible-config > playbooks" directory and append the below lines to "site.yml":
+
+```YAML
+- hosts: artifactory
+- name: artifactory assignment
+  ansible.builtin.import_playbook: ../static-assignments/artifactory.yml
+```
+* Commit and push changes to github.
+
+* **Prepare Jenkins:**
+1. Fork the repository below into your GitHub account
+```SHELL
+https://github.com/darey-devops/php-todo.git
+```
+
+2. On the Jenkins server, install PHP, its dependencies and Composer tool (Feel free to do this manually at first, then update your Ansible accordingly later)
+
+```SHELL
+# Install php and dependencies
+sudo yum module reset php -y
+sudo yum module enable php:remi-7.4 -y
+sudo yum install -y php php-common php-mbstring php-opcache php-intl php-xml php-gd php-curl php-mysqlnd php-fpm php-json
+sudo systemctl start php-fpm
+sudo systemctl enable php-fpm
+```
+
+Install Composer and check the version installed
+
+```SHELL
+# Install composer
+curl -sS https://getcomposer.org/installer | php
+sudo mv composer.phar /usr/bin/composer
+composer --version
+```
+3. Install Jenkins plugins
+* **Plot plugin:** This will be used to display tests reports and code coverage information.
+To install, On the Jenkins UI, navigate to "Dashboard > Manage Jenkins > Manage Plugins > Available Plugins" and search for "plot", install without restart.
+
+* **Artifactory plugin:** This will be used to easily upload code artifacts into an Artifactory server. To install, on the Jenkins UI, navigate to "Dashboard > Manage Jenkins > Manage Plugins > Available Plugins" and search for "Artifactory", install without restart.
+
+4. In Jenkins UI configure Artifactory
+
+* On the jenkins UI navigate to "Dashboard > Manage Jenkins > Configure System", scroll down to "JFrog" section, click on "Add JFrog Instance" and Configure the server ID, URL, Credentials,and run Test Connection.
+
+
+
+
+
+
+
 
 
 

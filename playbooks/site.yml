@@ -11,9 +11,9 @@
 - name: deploy tooling website
   ansible.builtin.import_playbook: ../static-assignments/webserver.yml
 
-# - hosts: artifactory
-# - name: artifactory assignment
-#   ansible.builtin.import_playbook: ../static-assignments/artifactory.yml
+- hosts: artifactory
+- name: artifactory assignment
+  ansible.builtin.import_playbook: ../static-assignments/artifactory.yml
 
 # - hosts: sonarqube
 # - name: sonar assignment
