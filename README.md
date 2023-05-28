@@ -1205,7 +1205,6 @@ We can confirm in the artifactory server to see the uploaded artifact.
 
 ![](./img/deploy_to_dev_stage.png)
 
-
 Notice that at this stage, we have not included an ansible playbook to set up the todo webserver, download the artifact from the artifactory repo and deploy the app to the webserver. The goal is to deploy the Todo App so we need to create a new ansible-playbook to configure the webserver and deploy the Todo App and modify the site.yml file to call this playbook and execute the tasks.
 
 * Navigate to the "ansible-config" directory, under the "static-assignments" directory, create a new yml file called "deployment.yml" and add the below block of codes to this file:
@@ -1296,7 +1295,7 @@ Notice that at this stage, we have not included an ansible playbook to set up th
 
 ![](./img/todo_artifact.png)
 
-* To get the url_password (which is essentially the encrypted version of your artifactory password), click on "Set up" in the top right hand corner of the page shown above, enter your password and click on "Generate Token", the copy the encrypted password and replace the url_password with it.
+* To get the url_password (which is essentially the encrypted version of your artifactory password), click on "Set Me Up" in the top right hand corner of the page shown above, enter your password and click on "Generate Token", the copy the encrypted password and replace the url_password with it.
 
 ![](./img/encrypt_password.png)
 
@@ -1310,9 +1309,304 @@ Notice that at this stage, we have not included an ansible playbook to set up th
 
 * Commit changes to the "feature/jenkinspipeline-stages" branch, push code to github and create a pull request to the main branch.
 
+* Navigate to Jenkins and rerun the "php-todo" pipeline.
+
+![](./img/deploy_phpApp_ansible.png)
+
 So far, we have successfully deployed the Todo app to the dev environment. But how are we certain that the code deployed has the quality that meets corporate and customer requirements? Even though we have implemented Unit Tests and Code Coverage Analysis with phpunit and phploc, we still need to implement Quality Gate to ensure that ONLY code with the required code coverage, and other quality standards make it through to the environments.
 
 To achieve this, we need to configure SonarQube – An open-source platform developed by SonarSource for continuous inspection of code quality to perform automatic reviews with static analysis of code to detect bugs, code smells, and security vulnerabilities.
+
+**INSTALL SONARQUBE**
+
+Before we start getting hands on with SonarQube configuration, it is incredibly important to understand a few concepts:
+
+* **Software Quality:** The degree to which a software component, system or process meets specified requirements based on user needs and expectations.
+* **Software Quality Gates:** Quality gates are basically acceptance criteria which are usually presented as a set of predefined quality criteria that a software development project must meet in order to proceed from one stage of its lifecycle to the next one.
+
+SonarQube is a tool that can be used to create quality gates for software projects, and the ultimate goal is to be able to ship only quality software code.
+
+Despite that DevOps CI/CD pipeline helps with fast software delivery, it is of the same importance to ensure the quality of such delivery. Hence, we will need SonarQube to set up Quality gates. In this project we will use predefined Quality Gates, also known as [The Sonar Way](https://docs.sonarqube.org/latest/instance-administration/quality-profiles/). Software testers and developers would normally work with project leads and architects to create custom quality gates.
+
+**Install SonarQube on Ubuntu 20.04 With PostgreSQL as Backend Database**
+
+* Create a new role called "sonarqube" in "ansible-config > Roles" directory.
+
+```SHELL
+cd ~/ansible-config/roles/
+ansible-galaxy init sonarqube
+cd sonarqube/
+rm -rf test && rm -rf vars && rm -rf defaults && rm -rf files
+```
+* Create two additional files under "~/ansible-config/roles/sonarqube/tasks" called "postgresql.yml and sonarqube-setup.yml"
+
+* Still in "~/ansible-config/roles/sonarqube/tasks", add the below block of codes to "main.yml" to install sonarqube and dependencies.
+
+```YAML
+---
+# tasks file for sonarqube
+- name: set max_map
+  become: true
+  command: sysctl -w vm.max_map_count=262144
+
+- name: set file max
+  become: true
+  command: sysctl -w fs.file-max=65536
+
+- name: Add max limits
+  ansible.builtin.lineinfile:
+    path: /etc/security/limits.conf
+    line: 
+      - sonarqube   -   nofile   65536
+      - sonarqube   -   nproc    4096
+    create: yes
+
+- name: Add ppa  repository 
+  ansible.builtin.apt_repository:
+    repo: ppa:linuxuprising/java
+
+- name: install python3
+  ansible.builtin.apt:
+    name: 
+      - python3
+      - python3-pip
+      - python3-dev
+      - libpq-dev
+    state: present
+
+- name: Install setuptools
+  pip:
+    name: setuptools
+    extra_args: --upgrade
+
+- name: upgrade pip command
+  pip:
+    name: pip
+    extra_args: --upgrade
+
+- name: install pip dependencies
+  pip:
+    name: psycopg2
+    executable: pip3
+
+- name: install java 11
+  ansible.builtin.apt:
+    name: 
+      - openjdk-11-jdk
+      - openjdk-11-jre
+    state: present
+    allow_unauthenticated: yes
+
+- import_tasks: postgresql.yml
+
+- name: Ensure group sonar exists
+  ansible.builtin.group:
+    name: sonar
+    state: present
+
+- import_tasks: sonarqube-setup.yml
+
+- name: start and enable sonarqube
+  ansible.builtin.service:
+    name: sonar
+    state: started
+    enabled: yes
+```
+
+* Still in "~/ansible-config/roles/sonarqube/tasks", add the below block of codes to "postgresql.yml" to set up postgresql.
+
+```YAML
+- name: add PostgreSQL repo to the repo list
+  ansible.builtin.lineinfile:
+    path: /etc/apt/sources.list.d/pgdg.list
+    line: deb http://apt.postgresql.org/pub/repos/apt/ `lsb_release -cs`-pgdg main
+    create: yes
+
+- name: Download PostgreSQL software key
+  ansible.builtin.apt_key:
+    url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+    state: present
+
+- name: install postgresql
+  ansible.builtin.apt:
+    pkg:
+    - postgresql
+    - postgresql-contrib
+    state: present
+
+- name: start and enable postgresql
+  ansible.builtin.service:
+    name: postgresql
+    state: started
+    enabled: yes
+     
+- name: create password for user postgres
+  ansible.builtin.user:
+    name: postgres
+    group: postgres
+    password: postgres
+
+- name: Create a new database sonarqubedb
+  become_user: postgres
+  community.postgresql.postgresql_db:
+    name: sonarqube
+    encoding: UTF-8
+
+- name: Create user sonarqube
+  become_user: postgres
+  community.postgresql.postgresql_user:
+    db: sonarqube
+    name: sonar
+    password: sonar
+    priv: "ALL"
+```
+* Still in "~/ansible-config/roles/sonarqube/tasks", add the below block of codes to "sonarqube-setup.yml" to set up sonarqube.
+
+```YAML
+- name: install unzip and wget
+  ansible.builtin.apt:
+    name:
+      - unzip
+      - wget
+
+- name: download the zip file
+  ansible.builtin.get_url:
+    url: https://binaries.sonarsource.com/Distribution/sonarqube/sonarqube-7.9.3.zip
+    dest: /opt/
+    mode: 0755
+
+- name: Create /opt/sonarqube/
+  ansible.builtin.file:
+    path: /opt/sonarqube/
+    state: directory
+    mode: '0755'
+
+- name: Extract the zip file
+  ansible.builtin.unarchive:
+    src: /opt/sonarqube-7.9.3.zip
+    dest: /opt/
+    remote_src: yes
+
+- name: Copy /opt/sonarqube/
+  ansible.builtin.copy:
+    src: /opt/sonarqube-7.9.3/
+    dest: /opt/sonarqube/
+    remote_src: yes
+    follow: yes
+
+- name: remove the zip file
+  ansible.builtin.file:
+    path: /opt/sonarqube-7.9.3.zip
+    state: absent
+
+- name: add user to run sonar
+  ansible.builtin.shell: useradd -c "user to run SonarQube" -d /opt/sonarqube -g sonar sonar 
+
+- name: change ownership
+  ansible.builtin.shell: chown sonar:sonar /opt/sonarqube -R
+    
+- name: Configuring the SonarQube Server
+  ansible.builtin.template:
+    src: templates/sonar.properties.j2
+    dest: /opt/sonarqube/conf/sonar.properties
+    force: yes
+
+- name: Update user in sonar.sh filee
+  ansible.builtin.lineinfile:
+    path: /opt/sonarqube/bin/linux-x86-64/sonar.sh
+    regexp: '^#RUN_AS_USER='
+    state: present
+    line: RUN_AS_USER=sonar
+    
+
+- name: create a service file
+  ansible.builtin.template:
+    src: templates/sonarqube.service.j2
+    dest:  /etc/systemd/system/sonar.service
+    force: yes
+```
+
+Navigate to "~/ansible-config/roles/sonarqube/templates" and create two configuration files named "sonar.properties.j2 and sonarqube.service.j2". Update these files with the content of these files [sonar.properties.j2](./roles/sonarqube/templates/sonar.properties.j2) and [sonarqube.service.j2](./roles/sonarqube/templates/sonarqube.service.j2).
+
+* Navigate to "~/ansible-config/static-assignments" and create a new file called "sonarqube.yml" and add the below contents to this file:
+
+```YAML
+---
+- hosts: sonarqube
+  become: true
+  roles:
+     - sonarqube
+```
+
+* Navigate to "~/ansible-config/playbooks/" and add the below lines to "site.yml"
+```YAML
+- hosts: sonarqube
+- name: sonar assignment
+  ansible.builtin.import_playbook: ../static-assignments/sonarqube.yml
+```
+
+* Commit code to github and run the build against the ci environment to setup the sonarqube server.
+
+**Access SonarQube**
+
+* Ensure port 9000 is open and confirm access to sonarqube by entering the public ip of the sonarqube server on your browser in this format http://13.41.70.79:9000/sonar/.
+
+![](./img/confirm_sonar_access.png)
+
+* Login to SonarQube with default administrator username and password – admin
+
+![](./img/login_sonar.png)
+
+![](./img/sonar_accessed.png)
+
+**CONFIGURE SONARQUBE AND JENKINS FOR QUALITY GATE**
+
+* In Jenkins, install "SonarQube Scanner" plugin
+
+* Navigate to configure system in Jenkins. Add SonarQube server as shown below:
+
+Manage Jenkins > Configure System
+
+![](./img/add_sonarscanner.png)
+
+* Generate authentication token in SonarQube
+
+ User > My Account > Security > Generate Tokens
+
+![](./img/Sonarqube-Token.png)
+
+* Configure Quality Gate Jenkins Webhook in SonarQube – The URL should point to your Jenkins server http://{JENKINS_HOST}/sonarqube-webhook/
+
+Administration > Configuration > Webhooks > Create
+![](./img/Sonar-Jenkins-Webhook.png)
+
+* Setup SonarQube scanner from Jenkins – Global Tool Configuration
+
+Manage Jenkins > Global Tool Configuration
+
+![](./img/Jenkins-SonarScanner.png)
+
+* Update Jenkins Pipeline to include SonarQube scanning and Quality Gate by adding the below code to the Jenkinsfile. This should be placed before the artifact packaging stage.
+
+```SHELL
+    stage('SonarQube Quality Gate') {
+        environment {
+            scannerHome = tool 'SonarQubeScanner'
+        }
+        steps {
+            withSonarQubeEnv('sonarqube') {
+                sh "${scannerHome}/bin/sonar-scanner"
+            }
+
+        }
+    }
+```
+
+* Commit and push changes to github then run the "php-todo" pipeline. This would fail because we have not updated "sonar-properties". However, we still need to run the above step because it will install the scanner tool on the Linux server.
+
+* Configure sonar-scanner.properties – From the step above, Jenkins will install the scanner tool on the Linux server. You will need to go into the tools directory on the server to configure the properties file in which SonarQube will require to function during pipeline execution.
+
+
 
 
 
