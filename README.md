@@ -666,6 +666,7 @@ ansible-galaxy init webserver
 
 ![](./img/tooling_set.png)
 
+
 **STEP 4: CI/CD Pipeline for Todo Application**
 
 Here we will introduce another PHP application to add to the list of software products we are managing in our infrastructure. The good thing with this particular application is that it has unit tests, and it is an ideal application to show an end-to-end CI/CD pipeline for a particular application.
@@ -1103,6 +1104,7 @@ sudo yum install zip -y
   * restart PHP-FPM (sudo systemctl restart php-fpm)
 
 * Push changes to github and build the php-todo pipeline
+
 
 
 
