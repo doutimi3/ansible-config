@@ -1665,6 +1665,154 @@ ls -latr
 ![](./img/scanner_tool_content.png)
 
 
+The quality gate we just included has no effect. Why? Well, because if you go to the SonarQube UI, you will realise that we just pushed a poor-quality code onto the development environment.
+
+* Navigate to php-todo project in SonarQube
+
+![](./img/sonar_report.png)
+
+There are 13 bugs, and there is 13.5% code coverage. (code coverage is a percentage of unit tests added by developers to test functions and objects in the code) and 43 code smells.
+
+* If you click on php-todo project for further analysis, you will see that there is 21 days’ worth of technical debt, code smells and security issues in the code.
+
+![](./img/full_sonar_report.png)
+
+In the development environment, this is acceptable as developers will need to keep iterating over their code towards perfection. But as a DevOps engineer working on the pipeline, we must ensure that the quality gate step causes the pipeline to fail if the conditions for quality are not met.
+
+**Conditionally deploy to higher environments**
+
+In the real world, developers will work on feature branch in a repository (e.g., GitHub or GitLab). There are other branches that will be used differently to control how software releases are done. You will see such branches as:
+
+* Develop
+* Master or Main
+* Feature/*
+* Release/*
+* Hotfix/*
+etc.
+
+**NB:** The "*" is a place holder for a version number, Jira Ticket name or some description. It can be something like Release-1.0.0)
+
+There is a very wide discussion around release strategy, and git branching strategies which in recent years are considered under what is known as [GitFlow](https://www.atlassian.com/git/tutorials/comparing-workflows/gitflow-workflow). An alternative to GitFlow is [Trunk-based development](https://www.atlassian.com/continuous-delivery/continuous-integration/trunk-based-development) (Have a read and keep as a bookmark – it is a possible candidate for an interview discussion, so take it seriously!)
+
+Assuming a basic gitflow implementation restricts only the develop branch to deploy code to Integration environment like sit.
+
+* Ensure you have merged the feature/jenkinspipeline-stage branch to the main branch. 
+* Create a new branch called "develop" based on the main branch.
+
+Let us update our Jenkinsfile to implement this:
+
+* First, we will include a When condition to run Quality Gate whenever the running branch is either develop, hotfix, release, main, or master
+
+```
+when { branch pattern: "^develop*|^hotfix*|^release*|^main*", comparator: "REGEXP"}
+```
+
+* Then we add a timeout step to wait for SonarQube to complete analysis and successfully finish the pipeline only when code quality is acceptable.
+
+```
+    timeout(time: 1, unit: 'MINUTES') {
+        waitForQualityGate abortPipeline: true
+    }
+```
+
+The complete stage will now look like this:
+
+```
+    stage('SonarQube Quality Gate') {
+      when { branch pattern: "^develop*|^hotfix*|^release*|^main*", comparator: "REGEXP"}
+        environment {
+          scannerHome = tool 'SonarQubeScanner'
+          nodePath = tool 'Node' // Add this line to set the Node.js tool
+        }
+        steps {
+          withEnv(['PATH+NODEJS=$nodeHome/bin']) {
+            withSonarQubeEnv('sonarqube') {
+              sh "${scannerHome}/bin/sonar-scanner -Dproject.settings=sonar-project.properties"
+          }
+          timeout(time: 1, unit: 'MINUTES') {
+              waitForQualityGate abortPipeline: true
+        }
+      }
+      }
+    }
+```
+
+* Push code to github, scan the repository on jenkins again for jenkins to identify the "develop" branch and run the pipeline against the develop branch. This would fail because we have introduced quality gate to ensure that all code deployed against the develop, hotfix, release, main, or master branch must pass the quality gate before we can move to the "artifact packaging stage".
+
+If everything goes well, you should be able to see something like this:
+
+![](./img/failed_quality_gate.png)
+
+Notice that with the current state of the code, it cannot be deployed to Integration environments due to its quality. In the real world, DevOps engineers will push this back to developers to work on the code further, based on SonarQube quality report. Once everything is good with code quality, the pipeline will pass and proceed with sipping the codes further to a higher environment.
+
+We the present setup, the develop, hotfix, release, main, or master branches cannot deploy code except the code pass the quality gate. Any branch aside the above mentioned branches can deploy the code even if it failed the quality gate.
+
+**Introduce Jenkins agents/slaves – Add 2 more servers to be used as Jenkins slave. Configure Jenkins to run its pipeline jobs randomly on any available slave nodes.**
+
+Ideally, the machine where we install standard Jenkins will be our Jenkins master. On the slave node machine, we will install a runtime program called Agent. Installing Agent will not be a standard Jenkins install, but this Agent will run on the JVM. It is capable enough to run the subtask or main task of Jenkins in a dedicated executor:
+
+![](https://www.baeldung.com/wp-content/uploads/2021/07/Distributed-Build.jpg)
+
+We can have any number of Agent nodes or slave nodes. Further, we can configure the master node to decide which task or job should run on which agent and how many executor agents we can have. The communication between master and Jenkins slave nodes is bi-directional and takes place over TCP/IP.
+
+Click on this link to read more about [Configuring Jenkins Slave nodes](https://www.baeldung.com/ops/jenkins-slave-node-setup)
+
+* Create a new instance called "Jenkins-slave"
+* Ensure JAVA is installed on this instance. "sudo yum install java-11-openjdk-devel -y"
+* Open .bashrc and add the below lines to export JAVA_HOME environment variables.
+
+```SHELL
+export JAVA_HOME=$(dirname $(readlink -f $(readlink -f $(which javac))))
+export PATH=$PATH:$JAVA_HOME/bin
+export CLASSPATH=.:$JAVA_HOME/jre/lib:$JAVA_HOME/lib:$JAVA_HOME/lib/tools.jar
+```
+
+* Reload the bash profile "source ~/.bash_profile"
+
+* To configure this new instance as a slave node, go to "Dashboard > Manage Jenkins > Manage Nodes and Cloud", click on "New Node" enter the name of the node and select "Permanent Agent" and "OK". Configure the next screen as shown below:
+
+![](./img/config_agent.png)
+
+NB: In "Host Key Verification Strategy", select "None verifying Verification Strategy".
+
+Use the private ip address of the jenkins-slave instance launched and the reuse the credentials setup at the early stage of this project in the credential section.
+
+* Click on the agent and confirm that it was launched successfully by checking its status.
+
+![](./img/agent_status.png)
+
+**Configure webhook between Jenkins and GitHub to automatically run the pipeline when there is a code push.**
+
+* Go to the php-todo repository on github. Click on "Settings > Webhook > Add Webhook" enter your github password and configure the next screen as shown below. Use the ip address of the jenkins-server:
+
+![](./img/webhook_configure.png)
+
+**Deploy the application to all the environments**
+
+To deploy to all environments,
+* Create all required instances
+* Update the inventory file for all environments with the required private ip addresses.
+* Commit and push code to the Ansible-config github repo.
+* In Jenkins, go to "Build Parameters" and select the environment you want to run the build on and continue to build the pipeline.
+
+
+**Credit**
+
+[Darey.io DevOps master Class](https://www.darey.io/)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
