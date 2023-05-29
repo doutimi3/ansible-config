@@ -1602,9 +1602,74 @@ Manage Jenkins > Global Tool Configuration
     }
 ```
 
-* Commit and push changes to github then run the "php-todo" pipeline. This would fail because we have not updated "sonar-properties". However, we still need to run the above step because it will install the scanner tool on the Linux server.
+* Commit and push changes for both php-todo and ansible-config to github, then run the "php-todo" pipeline. This would fail because we have not updated "sonar-properties". However, we still need to run the above step because it will install the scanner tool on the Linux server.
 
-* Configure sonar-scanner.properties – From the step above, Jenkins will install the scanner tool on the Linux server. You will need to go into the tools directory on the server to configure the properties file in which SonarQube will require to function during pipeline execution.
+* Configure sonar-scanner.properties – From the step above, Jenkins will install the scanner tool on the Linux server. You will need to go into the tools directory on the server to configure the properties file in which SonarQube will require to function during pipeline execution. Run the below commands to fix this:
+
+
+```SHELL
+sudo cd /var/lib/jenkins/tools/hudson.plugins.sonar.SonarRunnerInstallation/SonarQubeScanner/conf/
+
+#Open sonar-scanner.properties file
+sudo vi sonar-scanner.properties
+```
+Add configuration related to php-todo project
+
+```SHELL
+sonar.host.url=http://<SonarQube-Server-IP-address>:9000/sonar/
+sonar.projectKey=php-todo
+#----- Default source code encoding
+sonar.sourceEncoding=UTF-8
+sonar.php.exclusions=**/vendor/**
+sonar.php.coverage.reportPaths=build/logs/clover.xml
+sonar.php.tests.reportPath=build/logs/junit.xml
+```
+
+* Modify the 'SonarQube Quality Gate' stage to reflect the below code to include node.js tool.
+
+```
+    stage('SonarQube Quality Gate') {
+      environment {
+        scannerHome = tool 'SonarQubeScanner'
+        nodePath = tool 'Node' // Add this line to set the Node.js tool
+      }
+      steps {
+        withEnv(['PATH+NODEJS=$nodeHome/bin']) {
+          withSonarQubeEnv('sonarqube') {
+            sh "${scannerHome}/bin/sonar-scanner"
+        }
+      }
+    }
+    }
+```
+**NB:** For more information on how to write sonarqube pipeline syntax check the [SonarQube documentation page](https://docs.sonarqube.org/latest/analyzing-source-code/scanners/jenkins-extension-sonarqube/)
+
+* Go to "Dashboard > Manage jenkins > Manage Pluggins > Available Pluggins" and search for "Node.js". Install without restart.
+
+* Go to "Dashboard > Manage jenkins > Global Tool Configuration", scroll down to the "NodeJS" section, click on "Add NodeJS" to set it up. Provide a name for the installation and specifiy the Node.js version and installation directory. This name should be the same as the name set on your pipeline which in mys case is "Node".
+
+* Restart the Jenkins pipeline that failed previously, this would work now
+
+![](./img/code_qty_stage_complete.png)
+
+A brief explanation of what is going on the the stage – set the environment variable for the scannerHome use the same name used when you configured SonarQube Scanner from Jenkins Global Tool Configuration. If you remember, the name was SonarQubeScanner. Then, within the steps use shell to run the scanner from bin directory.
+
+To further examine the configuration of the scanner tool on the Jenkins server – navigate into the tools directory and list the content to see the scanner tool sonar-scanner. That is what we are calling in the pipeline script.
+
+```SHELL
+cd /var/lib/jenkins/tools/hudson.plugins.sonar.SonarRunnerInstallation/SonarQubeScanner/bin
+
+ls -latr
+```
+
+![](./img/scanner_tool_content.png)
+
+
+
+
+
+
+
 
 
 
