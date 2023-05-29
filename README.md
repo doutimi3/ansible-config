@@ -1665,6 +1665,24 @@ ls -latr
 ![](./img/scanner_tool_content.png)
 
 
+The quality gate we just included has no effect. Why? Well, because if you go to the SonarQube UI, you will realise that we just pushed a poor-quality code onto the development environment.
+
+* Navigate to php-todo project in SonarQube
+
+![](./img/sonar_report.png)
+
+There are 13 bugs, and there is 13.5% code coverage. (code coverage is a percentage of unit tests added by developers to test functions and objects in the code) and 43 code smells.
+
+* If you click on php-todo project for further analysis, you will see that there is 21 days’ worth of technical debt, code smells and security issues in the code.
+
+![](./img/full_sonar_report.png)
+
+In the development environment, this is acceptable as developers will need to keep iterating over their code towards perfection. But as a DevOps engineer working on the pipeline, we must ensure that the quality gate step causes the pipeline to fail if the conditions for quality are not met.
+
+**Conditionally deploy to higher environments**
+
+
+
 
 
 
